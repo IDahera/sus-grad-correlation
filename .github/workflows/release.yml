@@ -1,0 +1,150 @@
+# Cut a GitHub release for the paper artefact.
+#
+# Trigger by pushing a version tag:
+#
+#     git tag -a v1.0.0 -m "Artefact for <paper>"
+#     git push origin v1.0.0
+#
+# or manually from the Actions tab (workflow_dispatch) against an existing tag.
+#
+# The release is only created if the test suite passes AND the reproduction
+# image builds -- an artefact that does not build is worse than no artefact.
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to release (e.g. v1.0.0)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: unit tests (python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.11 = the floor declared in pyproject.toml, 3.12 = what the Docker
+        # images use, 3.14 = the environment the experiments were developed in.
+        # All three have torch wheels.
+        python-version: ["3.11", "3.12", "3.14"]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install (CPU torch wheels)
+        # The default index would pull the multi-GB CUDA build; CI only needs CPU.
+        run: |
+          python -m pip install --upgrade pip
+          pip install --index-url https://download.pytorch.org/whl/cpu torch torchvision
+          pip install -e ".[dev]"
+
+      - name: Run tests
+        run: pytest
+
+  docker:
+    name: reproduction image builds
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build the CPU image
+        # No registry push and no remote cache on purpose: this job exists to
+        # prove the artefact still builds from a clean checkout, and fewer moving
+        # parts means fewer ways for a release to fail for unrelated reasons.
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile
+          push: false
+          load: true
+          tags: susgrad:cpu
+
+      - name: Smoke-test the image
+        # Not the experiments themselves (hours) -- just proof that the entry
+        # point works and the package imports inside the image.
+        run: |
+          docker run --rm susgrad:cpu help
+          docker run --rm susgrad:cpu python -c "import susgrad, torch; print(torch.__version__)"
+
+  release:
+    name: publish release
+    needs: [test, docker]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # required to create the release
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+          fetch-depth: 0   # full history, so the generated notes have something to diff
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build sdist + wheel
+        run: |
+          python -m pip install --upgrade pip build
+          python -m build
+
+      - name: Checksums
+        run: |
+          cd dist
+          sha256sum * > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Write the release notes
+        run: |
+          cat > release-notes.md <<'NOTES'
+          Artefact for the suspiciousness / gradient correlation experiments.
+
+          **Experiment 1 — suspiciousness vs. gradient across random initialisations.**
+          100 freshly initialised instances per model/dataset pair, measured on the
+          held-out split at epochs 0 (untrained), 1 and 10. Result: the across-instance
+          correlation heatmaps plus the per-layer statistics.
+
+          **Experiment 2 — how suspiciousness evolves during training.**
+          One seeded instance per pair over 50 epochs, then one random neuron per model
+          followed across every epoch. Result: the per-neuron trajectory plots and the
+          value log.
+
+          Reproduce with no local Python installation:
+
+          ```
+          docker compose run --rm cpu experiment1
+          docker compose run --rm cpu experiment2
+          ```
+
+          Everything lands in `outputs/`. See the README section "Experiments and their
+          results" for exactly which file backs which claim.
+          NOTES
+          cat release-notes.md
+
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          gh release create "$TAG" \
+            --title "susgrad $TAG" \
+            --notes-file release-notes.md \
+            dist/*

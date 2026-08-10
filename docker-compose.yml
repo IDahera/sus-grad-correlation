@@ -1,0 +1,81 @@
+# susgrad -- reproduction services for both experiments.
+#
+#   CPU (Linux, Windows/WSL2, Intel and Apple-Silicon macOS):
+#     docker compose run --rm cpu experiment1
+#     docker compose run --rm cpu experiment2
+#
+#   GPU (NVIDIA only -- needs the host driver + NVIDIA Container Toolkit):
+#     docker compose run --rm gpu experiment1
+#     docker compose run --rm gpu experiment2
+#
+# `run --rm` (not `up`) is the intended verb: these are batch jobs that finish,
+# not services that stay up. Use `docker compose build cpu` (or `gpu`) to build
+# ahead of time.
+#
+# outputs/, data/ and trained_models/ are bind-mounted from the repository, so
+# EVERYTHING the experiments produce stays on the host after the container is
+# gone -- and a second run reuses the already-downloaded datasets and skips work
+# that is already captured.
+
+services:
+  cpu:
+    image: susgrad:cpu
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      args:
+        PYTHON_VERSION: "3.12"
+        TORCH_INDEX_URL: https://download.pytorch.org/whl/cpu
+    volumes:
+      - ./outputs:/app/outputs
+      - ./data:/app/data
+      - ./trained_models:/app/trained_models
+    environment:
+      # Everything the Makefile reads; unset means "use the script's default"
+      # (the base case: 100 instances x 10 epochs, captured at 0,1,10).
+      ENSEMBLE_INSTANCES: "${ENSEMBLE_INSTANCES:-}"
+      ENSEMBLE_EPOCHS: "${ENSEMBLE_EPOCHS:-}"
+      ENSEMBLE_CAPTURE_EPOCHS: "${ENSEMBLE_CAPTURE_EPOCHS:-}"
+      ENSEMBLE_METRICS: "${ENSEMBLE_METRICS:-}"
+      ENSEMBLE_OVERWRITE: "${ENSEMBLE_OVERWRITE:-}"
+      TRAJ_EPOCHS: "${TRAJ_EPOCHS:-}"
+      TRAJ_SEED: "${TRAJ_SEED:-}"
+      TRAJ_NEURON_SEED: "${TRAJ_NEURON_SEED:-}"
+      TRAJ_OVERWRITE: "${TRAJ_OVERWRITE:-}"
+    command: ["help"]
+
+  gpu:
+    image: susgrad:gpu
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      args:
+        PYTHON_VERSION: "3.12"
+        # CUDA 13.0 wheels; the CUDA runtime ships inside them, so no CUDA base
+        # image is needed -- only the host driver and the container toolkit.
+        # This index carries the same torch version as the CPU one, so both
+        # services compute identically. Host driver too old for CUDA 13? Use
+        # https://download.pytorch.org/whl/cu128 here instead.
+        TORCH_INDEX_URL: https://download.pytorch.org/whl/cu130
+    volumes:
+      - ./outputs:/app/outputs
+      - ./data:/app/data
+      - ./trained_models:/app/trained_models
+    environment:
+      ENSEMBLE_INSTANCES: "${ENSEMBLE_INSTANCES:-}"
+      ENSEMBLE_EPOCHS: "${ENSEMBLE_EPOCHS:-}"
+      ENSEMBLE_CAPTURE_EPOCHS: "${ENSEMBLE_CAPTURE_EPOCHS:-}"
+      ENSEMBLE_METRICS: "${ENSEMBLE_METRICS:-}"
+      ENSEMBLE_OVERWRITE: "${ENSEMBLE_OVERWRITE:-}"
+      TRAJ_EPOCHS: "${TRAJ_EPOCHS:-}"
+      TRAJ_SEED: "${TRAJ_SEED:-}"
+      TRAJ_NEURON_SEED: "${TRAJ_NEURON_SEED:-}"
+      TRAJ_OVERWRITE: "${TRAJ_OVERWRITE:-}"
+    command: ["help"]
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

@@ -1,0 +1,21 @@
+# Keep the build context small and the image reproducible: nothing generated,
+# downloaded or host-specific belongs in it. outputs/ and data/ arrive as bind
+# mounts at run time instead.
+.git
+.github
+.gitignore
+.pytest_cache
+**/__pycache__
+*.py[cod]
+*.egg-info
+build
+dist
+.venv
+venv
+
+outputs
+data
+trained_models/*.pt
+
+docs
+.DS_Store

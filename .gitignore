@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+build/
+dist/
+.venv/
+venv/
+
+# Downloaded datasets (keep the folder so a bind mount into Docker is writable)
+/data/*
+!/data/.gitkeep
+
+# Trained models (keep the folder, ignore the weights)
+/trained_models/*
+!/trained_models/.gitkeep
+
+# Generated experiment artefacts (gradients, suspiciousness, logs, viz, CSVs).
+# The folder itself is kept: Docker bind-mounts it, and a missing host dir would
+# be created root-owned by the daemon, which the non-root container user cannot
+# write to.
+/outputs/*
+!/outputs/.gitkeep
+
+# OS
+.DS_Store
