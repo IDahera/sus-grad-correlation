@@ -1,0 +1,21 @@
+{
+  "title": "sus-grad-correlation: suspiciousness and gradient correlation experiments for neural networks",
+  "description": "<p>Code and reproduction container for two experiments asking whether the neurons that spectrum-based fault localisation (SBFL) calls <em>suspicious</em> are the same neurons that carry a large loss gradient.</p><p><strong>Experiment 1</strong> trains 100 randomly initialised copies of each of four model/dataset pairs (MLP and LeNet-5, on MNIST and Fashion-MNIST) and correlates suspiciousness against the per-neuron gradient across that population, at epochs 0, 1 and 10.</p><p><strong>Experiment 2</strong> trains one seeded copy of each pair for 200 epochs, measuring after every epoch, and follows both a single neuron and the whole-model population across the run.</p><p>Both experiments reproduce from a clean checkout through Docker or through Python; see the README for the exact command sequences.</p><p>Supplement to: <em>An Empirical Analysis of the Correlation between Suspiciousness Scores and Loss Gradients in Neural Networks</em>.</p>",
+  "upload_type": "software",
+  "license": "mit",
+  "version": "1.0.0",
+  "creators": [
+    {
+      "name": "Rashedi, Daniel",
+      "orcid": "0009-0007-1607-9947"
+    }
+  ],
+  "keywords": [
+    "spectrum-based fault localisation",
+    "neural networks",
+    "gradients",
+    "suspiciousness",
+    "explainability",
+    "reproducibility"
+  ]
+}

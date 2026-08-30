@@ -123,9 +123,9 @@ jobs:
           correlation heatmaps plus the per-layer statistics.
 
           **Experiment 2 — how suspiciousness evolves during training.**
-          One seeded instance per pair over 50 epochs, then one random neuron per model
-          followed across every epoch. Result: the per-neuron trajectory plots and the
-          value log.
+          One seeded instance per pair over 200 epochs, measured after every epoch, then
+          one random neuron per model and the whole-neuron population followed across the
+          run. Result: the trajectory plots, the fitted trends and the value log.
 
           Reproduce with no local Python installation:
 
@@ -134,8 +134,17 @@ jobs:
           docker compose run --rm cpu experiment2
           ```
 
+          Or natively, after `pip install -e ".[dev]"`:
+
+          ```
+          make train-ensemble correlate-ensemble evaluate-ensemble figures-ensemble value-stats
+          make pipeline-trajectory
+          ```
+
           Everything lands in `outputs/`. See the README section "Experiments and their
           results" for exactly which file backs which claim.
+
+          Licensed MIT. Cite it via `CITATION.cff`, or via the Zenodo DOI for this release.
           NOTES
           cat release-notes.md
 

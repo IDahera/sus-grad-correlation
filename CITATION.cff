@@ -1,0 +1,35 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+title: "sus-grad-correlation: suspiciousness and gradient correlation experiments for neural networks"
+abstract: >-
+  Code and reproduction container for two experiments asking whether the neurons
+  that spectrum-based fault localisation (SBFL) calls suspicious are the same
+  neurons that carry a large loss gradient. Experiment 1 measures the
+  correlation across 100 randomly initialised copies of each model at fixed
+  epochs; experiment 2 follows one model's values across 200 epochs of training.
+type: software
+authors:
+  - family-names: Rashedi
+    given-names: Daniel
+    orcid: "https://orcid.org/0009-0007-1607-9947"
+version: 1.0.0
+date-released: "2026-08-30"
+license: MIT
+repository-code: "https://github.com/IDahera/sus-grad-correlation"
+keywords:
+  - spectrum-based fault localisation
+  - neural networks
+  - gradients
+  - suspiciousness
+  - explainability
+  - reproducibility
+references:
+  - type: article
+    title: >-
+      An Empirical Analysis of the Correlation between Suspiciousness Scores and
+      Loss Gradients in Neural Networks
+    authors:
+      - family-names: Rashedi
+        given-names: Daniel
+        orcid: "https://orcid.org/0009-0007-1607-9947"
+    year: 2026

@@ -10,4 +10,4 @@ Public sub-packages:
     susgrad.registry     -- the single source of truth for model/dataset combinations
 """
 
-__version__ = "0.1.0"
+__version__ = "1.0.0"

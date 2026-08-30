@@ -7,7 +7,7 @@
 #   experiment1   suspiciousness vs. gradient ACROSS random initialisations
 #                 (train -> correlate -> HTML report -> LaTeX figures)
 #   experiment2   how one model's values evolve ACROSS epochs
-#                 (train/capture every epoch -> per-neuron trajectory plots)
+#                 (train/capture every epoch -> per-neuron and population plots)
 #   paper         curate a small, flat set of paper-ready figures
 #   smoke         both experiments at a tiny scale (~2 min) -- proves the
 #                 pipeline runs end to end without the multi-hour cost
@@ -35,8 +35,8 @@ Commands:
   experiment1    Experiment 1: across 100 random initialisations, at epochs 0/1/10.
                  Writes correlation tensors + text report + HTML report + PNG/PDF
                  figures to outputs/ensemble/ and outputs/visualizations/.
-  experiment2    Experiment 2: one seeded model per combo over 200 epochs, then one
-                 random neuron per model plotted across those epochs. Writes to
+  experiment2    Experiment 2: one seeded model per combo over 200 epochs, then the
+                 per-neuron and whole-population value curves. Writes to
                  outputs/trajectory/.
   paper          Curate a small, flat set of paper-ready figures into outputs/paper/.
   smoke          Both experiments at a tiny scale, to verify the setup quickly.
@@ -67,14 +67,16 @@ case "${command}" in
         make value-stats
         ;;
     experiment2|exp2|trajectory)
-        echo "==> Experiment 2: value trajectories of one neuron across training"
+        echo "==> Experiment 2: how the values move across training"
         make train-trajectory plot-trajectory "$@"
-        make value-stats
+        make plot-trajectory-population
         ;;
     all)
         echo "==> Both experiments"
         make train-ensemble correlate-ensemble evaluate-ensemble figures-ensemble
+        make value-stats
         make train-trajectory plot-trajectory
+        make plot-trajectory-population
         ;;
     smoke)
         # Deliberately tiny: enough instances for a correlation to exist at all,
@@ -88,6 +90,8 @@ case "${command}" in
         python scripts/figures_ensemble.py --epochs 0,1,2 --formats png --no-singles
         python scripts/train_trajectory.py --epochs 3 --max-samples 512
         python scripts/plot_trajectory.py --formats png
+        python scripts/value_stats.py --only trajectory
+        python scripts/plot_trajectory_population.py --formats png
         echo "==> Smoke run complete -- see outputs/"
         ;;
     paper)

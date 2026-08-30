@@ -23,5 +23,8 @@ venv/
 /outputs/*
 !/outputs/.gitkeep
 
+# Long-running experiment logs kept while tuning; not part of the artefact
+/*.log
+
 # OS
 .DS_Store

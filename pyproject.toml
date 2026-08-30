@@ -1,12 +1,14 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "susgrad"
-version = "0.1.0"
+version = "1.0.0"
 description = "Suspiciousness / gradient correlation experiments for neural networks"
 readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
 # Developed on 3.14; the code itself uses nothing newer than 3.11, and the
 # published artefact has to install on whatever a reviewer already has (the
 # Docker images and CI default to 3.12, which every torch wheel supports).
@@ -25,6 +27,9 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["pytest>=8.0"]
 
+[project.urls]
+Repository = "https://github.com/IDahera/sus-grad-correlation"
+
 # Descriptive console entry points -- an alternative to numeric file prefixes.
 # After `pip install -e .` these become runnable commands.
 [project.scripts]
@@ -37,6 +42,7 @@ overview-ensemble = "scripts.overview_ensemble:main"
 # Experiment 2 -- how one model's values evolve ACROSS epochs.
 train-trajectory = "scripts.train_trajectory:main"
 plot-trajectory = "scripts.plot_trajectory:main"
+plot-trajectory-population = "scripts.plot_trajectory_population:main"
 # Secondary pipeline.
 train-models = "scripts.train_models:main"
 capture-gradients = "scripts.capture_gradients:main"
