@@ -26,8 +26,8 @@ keywords:
 references:
   - type: article
     title: >-
-      An Empirical Analysis of the Correlation between Suspiciousness Scores and
-      Loss Gradients in Neural Networks
+      Spectrum-Based Suspiciousness Scores as a Surrogate for Loss Gradients in
+      Neural Networks: An Empirical Study
     authors:
       - family-names: Rashedi
         given-names: Daniel
