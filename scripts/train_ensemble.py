@@ -140,7 +140,8 @@ def _stored_instance_results(seed_base: Path, combo_key: str) -> dict:
               help="Recompute instances that are already fully captured.")
 @ensemble_combo_options
 def main(instances, epochs, capture_epochs, metrics, batch_size, lr, seed, threshold,
-          dstar_exponent, max_samples, grad_dir, susp_dir, seed_dir, overwrite, **flags):
+          dstar_exponent, max_samples, grad_dir, susp_dir, seed_dir, overwrite,
+          **flags):
     log, logfile = setup_logging("train_ensemble")
     capture = parse_epoch_list(capture_epochs, max_epoch=epochs)
     metric_names = [m.strip() for m in metrics.split(",") if m.strip()]

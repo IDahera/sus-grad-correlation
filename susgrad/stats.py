@@ -19,6 +19,12 @@ import torch
 # The columns every stats row carries, in report order.
 STAT_FIELDS = ("n", "min", "p05", "median", "mean", "p95", "max", "std", "frac_zero")
 
+#: The ``layer`` value of a row that pools EVERY layer's neurons into one
+#: population ("the whole model"). A sentinel rather than a literal ``"all"``
+#: spelled out in three files, because the population trajectory plots select
+#: rows by exactly this value.
+ALL_LAYERS = "all"
+
 
 def describe_values(values, *, percentiles: Sequence[float] = (5, 95)) -> Dict[str, float]:
     """Min / percentiles / median / mean / max / std / zero-share of *values*.

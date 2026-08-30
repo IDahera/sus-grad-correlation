@@ -30,6 +30,8 @@ from scripts._cli import (
     section,
     setup_logging,
 )
+from functools import partial
+
 from susgrad.grads import compute_gradient_spectrum
 from susgrad.persistence import save_gradients
 from susgrad.registry import select_combinations
@@ -47,7 +49,8 @@ from susgrad.utils import GRADIENTS_DIR, describe_mapping
 @overwrite_option
 @only_option
 @combo_options
-def main(epochs, stops, batch_size, lr, seed, max_samples, output_dir, overwrite, only, **flags):
+def main(epochs, stops, batch_size, lr, seed, max_samples, output_dir, overwrite, only,
+         **flags):
     log, logfile = setup_logging("capture_gradients")
     stop_list = parse_stops(stops, epochs)
     base_dir = Path(output_dir) if output_dir else GRADIENTS_DIR

@@ -31,7 +31,13 @@
 #     1. make train-trajectory     train + capture (skips what already exists)
 #     2. make plot-trajectory      pick a neuron, plot its susp/grad curves, log
 #                                  the values and which neuron was picked
-#     (`make pipeline-trajectory` runs both.)
+#     3. make plot-trajectory-population
+#                                  the SAME 4x3 overview, but for ALL neurons at
+#                                  once: population mean + 5-95% band + a fitted
+#                                  trend per panel (does it converge, and where
+#                                  to?). Reads the value-stats table, so it runs
+#                                  `value_stats.py --only trajectory` first.
+#     (`make pipeline-trajectory` runs 1-3.)
 #
 #   SECONDARY (original) PIPELINE -- one instance per combo (all 11: 5 tabular +
 #   3 image datasets x {dense MLP, LeNet}), trained once over many epochs.
@@ -108,7 +114,8 @@ TRAJ_OVERWRITE_ARG := $(if $(TRAJ_OVERWRITE),--overwrite,)
 .PHONY: help install overview pipeline train-models train-binary-models train-image-models \
         capture-gradients capture-suspiciousness correlate evaluate \
         overview-ensemble pipeline-ensemble train-ensemble correlate-ensemble evaluate-ensemble \
-        figures-ensemble value-stats paper-figures train-trajectory plot-trajectory pipeline-trajectory \
+        figures-ensemble value-stats paper-figures train-trajectory plot-trajectory \
+        plot-trajectory-population pipeline-trajectory \
         test clean clean-caches clean-data clean-ensemble clean-trajectory
 
 help: ## Show this help
@@ -137,32 +144,26 @@ figures-ensemble: ## E4. Export the heatmaps as PNG/PDF files for LaTeX (+ figur
 value-stats: ## Value ranges (min/median/mean/max) per model x layer x metric x epoch -> CSV
 	$(PYTHON) scripts/value_stats.py
 
-# The curated set for the write-up. Everything below is just figures_ensemble.py
-# with filters -- the script stays simple, the SELECTION lives here, in one place
-# you can read and change. Four blocks, matching the four figures a paper needs:
-#   1. one model, all three metrics          (metric comparison)
-#   2. all four models, one metric           (does it generalise?)
-#   3. one dense + one conv layer            (layer-type comparison)
-#   4. susp + gradient of one layer          (what is being correlated)
-PAPER_DIR ?= outputs/paper
-PAPER_METHOD ?= spearman
-PAPER_MODEL ?= mlp_mnist
-paper-figures: ## Curate a small, flat set of paper-ready figures into outputs/paper/
-	@rm -rf $(PAPER_DIR)
-	$(PYTHON) scripts/figures_ensemble.py --flat --out-dir $(PAPER_DIR) \
-		--metrics ochiai,tarantula,dstar --methods $(PAPER_METHOD) --layers net.1 \
-		--no-samples --no-mlp-fmnist --no-lenet-mnist --no-lenet-fmnist
-	$(PYTHON) scripts/figures_ensemble.py --flat --out-dir $(PAPER_DIR) \
-		--metrics ochiai --methods $(PAPER_METHOD) --layers net.1,fc1 --no-samples
-	$(PYTHON) scripts/figures_ensemble.py --flat --out-dir $(PAPER_DIR) \
-		--metrics ochiai --methods $(PAPER_METHOD) --layers conv1,fc1 \
-		--no-samples --no-mlp-mnist --no-mlp-fmnist --no-lenet-fmnist
-	$(PYTHON) scripts/figures_ensemble.py --flat --out-dir $(PAPER_DIR) \
-		--metrics ochiai --methods $(PAPER_METHOD) --layers net.1 --no-rows \
-		--instance-seed 42 --no-mlp-fmnist --no-lenet-mnist --no-lenet-fmnist
-	@echo
-	@echo "Curated set in $(PAPER_DIR) ($$(ls $(PAPER_DIR)/*.pdf 2>/dev/null | wc -l | tr -d ' ') PDFs):"
-	@ls $(PAPER_DIR) | grep '\.pdf$$' | sed 's/^/  /'
+# The curated set for the write-up: five documented folders, each with a README
+# whose caption line goes straight into \caption{}. Selects from the full export
+# (figures-ensemble) via its manifest -- it draws nothing itself, so the figures
+# in the paper are bit-identical to the ones in the artefact.
+PAPER_ARGS ?=
+PAPER_METHOD_EPOCHS ?= 0,1
+paper-figures: ## Curate five documented folders of paper-ready figures into outputs/paper/
+	@# Folder 01 contrasts two epochs. Per-epoch singles are each scaled to their
+	@# OWN range, which hides the very change the figure exists to show, so first
+	@# add a shared-scale row for exactly those epochs to the export.
+	$(PYTHON) scripts/figures_ensemble.py --epochs $(PAPER_METHOD_EPOCHS) \
+		--layers net.1 --metrics ochiai --methods spearman --no-singles \
+		--no-mlp-fmnist --no-lenet-mnist --no-lenet-fmnist
+	@# Folder 05 pairs the single-neuron overview with the population one. The
+	@# population figure is drawn from the value-stats table, so refresh both --
+	@# cheap (it re-reads existing dumps, nothing is retrained) and it keeps the
+	@# curated figure in step with the run currently on disk.
+	$(PYTHON) scripts/value_stats.py --only trajectory
+	$(PYTHON) scripts/plot_trajectory_population.py
+	$(PYTHON) scripts/paper_set.py --method-epochs $(PAPER_METHOD_EPOCHS) $(PAPER_ARGS)
 
 overview-ensemble: ## Render the data-free MAIN pipeline overview HTML (models, steps, metrics)
 	$(PYTHON) scripts/overview_ensemble.py
@@ -179,7 +180,15 @@ train-trajectory: ## T1. Train 1 instance/combo over many epochs, capture every 
 plot-trajectory: ## T2. Pick a random neuron per model, plot susp/grad over epochs (TRAJ_SEED=, TRAJ_NEURON_SEED=)
 	$(PYTHON) scripts/plot_trajectory.py $(TRAJ_SEED_ARG) $(TRAJ_NEURON_SEED_ARG)
 
-pipeline-trajectory: train-trajectory plot-trajectory ## Run experiment 2 end to end (T1 + T2)
+# The population figure is drawn FROM the value-stats table (its `layer = all`
+# rows), so the curve and the reported numbers are the same numbers. Refreshing
+# the table first is what keeps that true after a longer training run.
+POP_ARGS ?=
+plot-trajectory-population: ## T3. Mean over ALL neurons per epoch + fitted trend, 4x3 overview (POP_ARGS="--stat median")
+	$(PYTHON) scripts/value_stats.py --only trajectory $(TRAJ_SEED_ARG)
+	$(PYTHON) scripts/plot_trajectory_population.py $(POP_ARGS)
+
+pipeline-trajectory: train-trajectory plot-trajectory plot-trajectory-population ## Run experiment 2 end to end (T1-T3)
 
 # =============================================================================
 # SECONDARY (original) PIPELINE -- 11 combos, one instance each, many epochs

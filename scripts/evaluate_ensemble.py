@@ -170,7 +170,8 @@ def _build_combo_payload(combo, instances, chosen_inst, candidate_epochs, susp_b
 @click.option("--corr-dir", default=None, help="Base dir for ensemble correlation dumps.")
 @click.option("--output", default=None, help="Output HTML path.")
 @ensemble_combo_options
-def main(instance, instance_seed, epochs, grad_dir, susp_dir, corr_dir, output, **flags):
+def main(instance, instance_seed, epochs, grad_dir, susp_dir, corr_dir, output,
+         **flags):
     log, logfile = setup_logging("evaluate_ensemble")
     wanted_epochs = parse_epoch_list(epochs, allow_auto=True)
     combos = select_ensemble_combinations(collect_enabled_ensemble(flags))

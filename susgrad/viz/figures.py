@@ -27,6 +27,7 @@ Both are generated, and :func:`write_latex_index` emits a ready-to-use
 import csv
 import math
 import re
+from itertools import cycle
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
@@ -36,6 +37,7 @@ matplotlib.use("Agg")  # headless backend
 import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
 from matplotlib.lines import Line2D  # noqa: E402
+from matplotlib.patches import Patch  # noqa: E402
 from matplotlib.ticker import MaxNLocator  # noqa: E402
 
 from susgrad.utils.paths import ensure_dir  # noqa: E402
@@ -287,20 +289,45 @@ def _apply_log_scale(ax, series) -> bool:
     return True
 
 
+#: Colours shared by the series panels, so the figure-level legend
+#: (:func:`series_legend`) can describe lines it did not draw itself.
+SERIES_COLOR = "#1f77b4"     # the left-axis series
+REFERENCE_COLOR = "#333333"  # the right-axis reference (the gradient)
+FIT_COLOR = "#d62728"        # a fitted trend drawn on top of a series
+CONTEXT_COLOR = "#2ca02c"    # the offset third axis (the loss behind the gradient)
+
+#: Dash patterns for the third-axis series, applied in the order given (and
+#: cycled). Colour alone would not separate them from the right-axis reference
+#: in a greyscale print, so each context series gets its own dash instead.
+CONTEXT_DASHES = ("-.", (0, (1, 1.6)), (0, (5, 1, 1, 1, 1, 1)))
+
+#: How far (in points) the third axis is pushed out past the right-hand one.
+#: Enough to clear the right axis's OWN tick labels *and* its y-label, which sit
+#: in between -- at 42pt the gradient's label lands on top of the loss's ticks in
+#: a narrow grid panel.
+CONTEXT_SPINE_OFFSET = 60.0
+
+
 def draw_series_panel(
     ax,
     x,
     left_series: Dict[str, Sequence[float]],
     *,
     right_series: Optional[Dict[str, Sequence[float]]] = None,
+    left_band: Optional[Tuple[Sequence[float], Sequence[float]]] = None,
+    right_band: Optional[Tuple[Sequence[float], Sequence[float]]] = None,
+    left_fit: Optional[Sequence[float]] = None,
+    right_fit: Optional[Sequence[float]] = None,
+    context_series: Optional[Dict[str, Sequence[float]]] = None,
     title: str = "",
     xlabel: str = "epoch",
     left_label: str = "",
     right_label: str = "",
+    context_label: str = "",
     legend: bool = False,
     log_scale: str = "auto",
 ):
-    """Draw one panel: left-axis series plus an optional right-axis reference.
+    """Draw one panel: left-axis series plus optional right-axis and third-axis references.
 
     Suspiciousness metrics and gradients live on utterly different scales (ochiai
     is 0..1, D* runs into the millions, mean |gradient| is ~1e-5), so anything
@@ -309,6 +336,21 @@ def draw_series_panel(
     (the gradient) dashed on its own right-hand axis, and switches to a log axis
     when the values span more than :data:`LOG_SCALE_DECADES` decades.
 
+    Args:
+        left_band / right_band: ``(lower, upper)`` sequences shaded behind the
+            series -- for a curve that is a population summary (a mean over many
+            neurons), the spread is the difference between "they all did this"
+            and "the average of two opposite halves".
+        left_fit / right_fit: a fitted trend sampled at *x*, drawn as a thin
+            solid line on top of the data (see :mod:`susgrad.trends`).
+        context_series: further curves sharing ONE more y-axis, drawn on a spine
+            pushed out past the right-hand one (see :data:`CONTEXT_SPINE_OFFSET`)
+            in :data:`CONTEXT_COLOR` with their own dash patterns. Meant for the
+            quantity the other two are read AGAINST rather than a third
+            competitor -- the loss the gradient is a derivative of. Values that
+            are ``nan`` leave a gap, so a series missing an epoch (train loss has
+            none at epoch 0) does not have to be padded with a fake number.
+
     No per-panel legend by default: the axis labels already name both series, and
     a legend box inside the axes lands on top of the curves. Callers that want
     one draw a single figure-level legend instead (see :func:`series_legend`).
@@ -316,8 +358,14 @@ def draw_series_panel(
     Returns ``{"left_log": bool, "right_log": bool}`` so a caller can say so in
     the axis label.
     """
+    if left_band is not None:
+        ax.fill_between(x, left_band[0], left_band[1], color=SERIES_COLOR,
+                        alpha=0.16, linewidth=0)
     for name, values in left_series.items():
-        ax.plot(x, values, marker="o", markersize=2.4, linewidth=1.3, label=name)
+        ax.plot(x, values, marker="o", markersize=2.4, linewidth=1.3,
+                color=SERIES_COLOR, label=name)
+    if left_fit is not None:
+        ax.plot(x, left_fit, color=FIT_COLOR, linewidth=1.4, label="fit")
     ax.set_xlabel(xlabel)
     ax.grid(True, alpha=0.25, linewidth=0.6)
     # Epochs are whole numbers; matplotlib's default would offer 0.5 steps.
@@ -325,6 +373,11 @@ def draw_series_panel(
     # Headroom, so a peak never touches the frame (and any annotation fits).
     ax.margins(y=0.12)
 
+    # Linear or log is decided from the SERIES ALONE -- never from the band or
+    # the fit. A percentile band routinely touches zero (neurons that never
+    # fire), which on a symlog axis pulls the scale down twenty decades and
+    # squashes the curve the panel is about into the top edge. The band is still
+    # drawn in full; only its influence on the choice of scale is dropped.
     left_log = _apply_log_scale(ax, left_series.values()) if log_scale == "auto" else False
     ax.set_ylabel(f"{left_label} (log)" if left_log else left_label)
     handles, labels = ax.get_legend_handles_labels()
@@ -332,35 +385,79 @@ def draw_series_panel(
     right_log = False
     if right_series:
         ax_r = ax.twinx()
+        if right_band is not None:
+            ax_r.fill_between(x, right_band[0], right_band[1], color=REFERENCE_COLOR,
+                              alpha=0.10, linewidth=0)
         for name, values in right_series.items():
-            ax_r.plot(x, values, linestyle="--", linewidth=1.3, color="#333333", label=name)
+            ax_r.plot(x, values, linestyle="--", linewidth=1.3, color=REFERENCE_COLOR, label=name)
+        if right_fit is not None:
+            ax_r.plot(x, right_fit, color=FIT_COLOR, linewidth=1.2, linestyle=":")
         ax_r.margins(y=0.12)
         right_log = _apply_log_scale(ax_r, right_series.values()) if log_scale == "auto" else False
         ax_r.set_ylabel(f"{right_label} (log)" if right_log else right_label)
         h2, l2 = ax_r.get_legend_handles_labels()
         handles, labels = handles + h2, labels + l2
 
+    context_log = False
+    if context_series:
+        ax_c = ax.twinx()
+        # Out past the right-hand axis, with only that one spine drawn: the twin
+        # otherwise repeats the frame the panel already has.
+        ax_c.spines["right"].set_position(("outward", CONTEXT_SPINE_OFFSET))
+        ax_c.patch.set_visible(False)
+        for side, spine in ax_c.spines.items():
+            spine.set_visible(side == "right")
+        for (name, values), dashes in zip(context_series.items(), cycle(CONTEXT_DASHES)):
+            ax_c.plot(x, values, linestyle=dashes, linewidth=1.2, color=CONTEXT_COLOR, label=name)
+        ax_c.tick_params(axis="y", colors=CONTEXT_COLOR)
+        ax_c.spines["right"].set_color(CONTEXT_COLOR)
+        ax_c.margins(y=0.12)
+        context_log = (_apply_log_scale(ax_c, context_series.values())
+                       if log_scale == "auto" else False)
+        ax_c.set_ylabel(f"{context_label} (log)" if context_log else context_label,
+                        color=CONTEXT_COLOR)
+        h3, l3 = ax_c.get_legend_handles_labels()
+        handles, labels = handles + h3, labels + l3
+
     if title:
         ax.set_title(title)
     if legend:
         ax.legend(handles, labels, fontsize=6.5, loc="best", framealpha=0.85)
-    return {"left_log": left_log, "right_log": right_log, "handles": handles, "labels": labels}
+    return {"left_log": left_log, "right_log": right_log, "context_log": context_log,
+            "handles": handles, "labels": labels}
 
 
 def series_legend(fig, *, left_label: str = "suspiciousness (left axis)",
-                  right_label: str = "mean |gradient| (right axis)") -> None:
+                  right_label: str = "mean |gradient| (right axis)",
+                  band_label: str = "", fit_label: str = "",
+                  context_labels: Sequence[str] = ()) -> None:
     """One legend for the whole figure, below the panels -- never over the data.
 
     Deliberately explains the *line styles*, not the series names: each panel
     shows a different metric, so reusing one panel's handles would label every
     panel's solid line with the first panel's metric name. The metric itself is
     already on each panel's title and y-axis.
+
+    *band_label*, *fit_label* and *context_labels* add entries for the shaded
+    spread, the fitted trend and the third-axis series when a caller drew them
+    (see :func:`draw_series_panel`). The context entries repeat
+    :data:`CONTEXT_DASHES` in the order they were plotted, so the legend and the
+    panels cannot drift apart.
     """
-    proxies = [Line2D([], [], color="#1f77b4", marker="o", markersize=3.2, linewidth=1.3)]
+    proxies = [Line2D([], [], color=SERIES_COLOR, marker="o", markersize=3.2, linewidth=1.3)]
     labels = [left_label]
+    if band_label:
+        proxies.append(Patch(facecolor=SERIES_COLOR, alpha=0.16, edgecolor="none"))
+        labels.append(band_label)
+    if fit_label:
+        proxies.append(Line2D([], [], color=FIT_COLOR, linewidth=1.4))
+        labels.append(fit_label)
     if right_label:
-        proxies.append(Line2D([], [], color="#333333", linestyle="--", linewidth=1.3))
+        proxies.append(Line2D([], [], color=REFERENCE_COLOR, linestyle="--", linewidth=1.3))
         labels.append(right_label)
+    for label, dashes in zip(context_labels, cycle(CONTEXT_DASHES)):
+        proxies.append(Line2D([], [], color=CONTEXT_COLOR, linestyle=dashes, linewidth=1.2))
+        labels.append(label)
     fig.legend(proxies, labels, fontsize=7.5, loc="lower center",
                ncol=len(labels), frameon=False, bbox_to_anchor=(0.5, 0.0))
 
@@ -371,35 +468,173 @@ def save_metric_panels(
     left_by_name: Dict[str, Sequence[float]],
     *,
     right_series: Optional[Dict[str, Sequence[float]]] = None,
+    bands_by_name: Optional[Dict[str, Tuple[Sequence[float], Sequence[float]]]] = None,
+    fits_by_name: Optional[Dict[str, Sequence[float]]] = None,
+    right_band: Optional[Tuple[Sequence[float], Sequence[float]]] = None,
+    right_fit: Optional[Sequence[float]] = None,
+    context_series: Optional[Dict[str, Sequence[float]]] = None,
     suptitle: str = "",
     subtitle: str = "",
     xlabel: str = "epoch",
+    left_legend_label: str = "suspiciousness (left axis)",
+    right_legend_label: str = "mean |gradient| (right axis)",
     right_label: str = "",
+    context_label: str = "",
+    context_legend_labels: Sequence[str] = (),
+    band_label: str = "",
+    fit_label: str = "",
     formats: Sequence[str] = DEFAULT_FORMATS,
     dpi: int = 300,
 ) -> List[Path]:
     """One panel per left-hand series (e.g. per suspiciousness metric), side by side.
 
     Every panel repeats the *right_series* (the gradient) so each metric can be
-    read against it directly, each on a scale that suits it.
+    read against it directly, each on a scale that suits it. *bands_by_name* and
+    *fits_by_name* are keyed by the same names as *left_by_name*, so a panel gets
+    its own spread band and fitted trend.
     """
     if not left_by_name:
         raise ValueError("save_metric_panels needs at least one series.")
     names = list(left_by_name)
+    bands_by_name = bands_by_name or {}
+    fits_by_name = fits_by_name or {}
+    # The offset third axis needs its own strip of width, or tight_layout buys
+    # it by shrinking the panels instead.
+    panel_width = 4.2 + (0.85 if context_series else 0.0)
     with plt.rc_context(PAPER_STYLE):
-        fig, axes = plt.subplots(1, len(names), figsize=(4.2 * len(names), 3.4), squeeze=False)
+        fig, axes = plt.subplots(1, len(names), figsize=(panel_width * len(names), 3.4),
+                                 squeeze=False)
         for ax, name in zip(axes[0], names):
             draw_series_panel(
                 ax, x, {name: left_by_name[name]}, right_series=right_series,
+                left_band=bands_by_name.get(name), left_fit=fits_by_name.get(name),
+                right_band=right_band, right_fit=right_fit,
+                context_series=context_series,
                 title=name, xlabel=xlabel, left_label=name, right_label=right_label,
+                context_label=context_label,
             )
         if suptitle:
             fig.suptitle(f"{suptitle}\n{subtitle}" if subtitle else suptitle, fontsize=9.5)
         # Reserve the bottom strip BEFORE placing the legend, so it cannot land
         # on the x-axis labels.
         fig.tight_layout(rect=(0, 0.09, 1, 1))
-        series_legend(fig)
+        series_legend(fig, left_label=left_legend_label, right_label=right_legend_label,
+                      band_label=band_label, fit_label=fit_label,
+                      context_labels=context_legend_labels)
         return _save(fig, Path(stem), formats, dpi)
+
+
+#: Style per candidate model in the evidence figure. The winner is the only
+#: solid line, so which one was chosen is visible before reading any label.
+CANDIDATE_STYLES = {
+    "exp": {"color": "#d62728", "linestyle": "-", "linewidth": 1.6},
+    "exp0": {"color": "#9467bd", "linestyle": ":", "linewidth": 1.4},
+    "linear": {"color": "#ff7f0e", "linestyle": "--", "linewidth": 1.3},
+    "const": {"color": "#7f7f7f", "linestyle": "-.", "linewidth": 1.2},
+}
+
+
+def draw_candidate_panel(ax, x, y, curves, *, title: str = "", xlabel: str = "epoch",
+                         ylabel: str = "", annotation: str = "", log_scale: str = "auto"):
+    """The data with every CANDIDATE model drawn over it.
+
+    This is the figure that makes a model-selection table readable: a reader can
+    see the constant sitting flat through the middle, the line cutting the corner,
+    the zero-asymptote exponential diving below the data, and the chosen fit
+    following it -- which is the same verdict the AIC column gives, in a form that
+    needs no statistics to check.
+
+    Args:
+        curves: ``[(model_name, values), ...]`` in the order they should be drawn.
+        annotation: small text block (the per-model ΔAIC) placed in a corner.
+    """
+    ax.plot(x, y, marker="o", markersize=2.0, linewidth=0, color=SERIES_COLOR,
+            alpha=0.55, label="data", zorder=1)
+    for name, values in curves:
+        style = CANDIDATE_STYLES.get(name, {"color": "#333333", "linestyle": "-"})
+        ax.plot(x, values, label=name, zorder=2, **style)
+
+    ax.set_xlabel(xlabel)
+    ax.grid(True, alpha=0.25, linewidth=0.6)
+    ax.xaxis.set_major_locator(MaxNLocator(integer=True))
+
+    # BOTH the scale and the limits come from the DATA alone. A rejected
+    # candidate is often wrong by orders of magnitude -- the zero-asymptote
+    # exponential reaches 1e-30 on D* -- and letting it set the frame would
+    # compress the data into a single line, hiding the very comparison the panel
+    # exists to show. Clipped instead: the reader sees it leave the axes, which
+    # is the point.
+    logged = _apply_log_scale(ax, [y]) if log_scale == "auto" else False
+    ax.set_ylabel(f"{ylabel} (log)" if logged else ylabel)
+    finite = np.asarray([v for v in np.asarray(y, dtype=float) if np.isfinite(v)])
+    if finite.size:
+        low, high = float(finite.min()), float(finite.max())
+        if logged:
+            positive = finite[finite > 0]
+            floor = float(positive.min()) / 3.0 if positive.size else low
+            ax.set_ylim(floor, high * 3.0)
+        else:
+            pad = 0.12 * (high - low) or (abs(high) * 0.1 or 1.0)
+            ax.set_ylim(low - pad, high + pad)
+    if title:
+        ax.set_title(title)
+    if annotation:
+        ax.text(0.97, 0.95, annotation, transform=ax.transAxes, fontsize=6.2,
+                va="top", ha="right", family="monospace",
+                bbox=dict(boxstyle="round,pad=0.3", facecolor="white", alpha=0.82,
+                          edgecolor="#cccccc", linewidth=0.6))
+    return {"log": logged}
+
+
+def draw_window_panel(ax, windows, *, title: str = "", xlabel: str = "epoch",
+                      ylabel: str = "", label_steps: bool = True):
+    """Window levels with their own spread -- convergence without a fitted model.
+
+    Each window is one point at its midpoint, with an error bar of +/-1 standard
+    deviation WITHIN that window. Convergence is then something the eye can check
+    directly: the points stop stepping down, and consecutive error bars overlap.
+
+    Args:
+        windows: dicts from :func:`susgrad.trends.window_levels`.
+    """
+    centres = [0.5 * (w["start"] + w["end"]) for w in windows]
+    means = [w["mean"] for w in windows]
+    spreads = [w["std"] for w in windows]
+
+    ax.errorbar(centres, means, yerr=spreads, marker="o", markersize=4.0, linewidth=1.2,
+                capsize=3.0, color=SERIES_COLOR, ecolor="#7f9fc4", zorder=2)
+    # The final level, extended back across the panel: every earlier window is
+    # then read as a distance from where the run ended up.
+    if windows:
+        ax.axhline(means[-1], color=FIT_COLOR, linestyle="--", linewidth=1.0, alpha=0.8,
+                   zorder=1)
+    if label_steps:
+        for centre, mean, window in zip(centres[1:], means[1:], windows[1:]):
+            step = window.get("step_in_sd")
+            if step is None:
+                continue
+            ax.annotate(f"{step:.2f}σ", (centre, mean), textcoords="offset points",
+                        xytext=(0, 9), ha="center", fontsize=6.0, color="#444444")
+
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel(ylabel)
+    ax.grid(True, alpha=0.25, linewidth=0.6)
+    ax.xaxis.set_major_locator(MaxNLocator(integer=True))
+    ax.margins(y=0.22)
+    if title:
+        ax.set_title(title)
+
+
+def candidate_legend(fig, models, *, data_label: str = "population mean per epoch") -> None:
+    """Figure-level legend naming each candidate model's line style."""
+    proxies = [Line2D([], [], color=SERIES_COLOR, marker="o", markersize=3.2, linewidth=0)]
+    labels = [data_label]
+    for name in models:
+        style = CANDIDATE_STYLES.get(name, {"color": "#333333", "linestyle": "-"})
+        proxies.append(Line2D([], [], **style))
+        labels.append(name)
+    fig.legend(proxies, labels, fontsize=7.5, loc="lower center", ncol=len(labels),
+               frameon=False, bbox_to_anchor=(0.5, 0.0))
 
 
 def new_grid_figure(nrows: int, ncols: int, *, figsize=None):
@@ -411,29 +646,58 @@ def new_grid_figure(nrows: int, ncols: int, *, figsize=None):
 
 
 def save_figure(fig, stem: Path, formats: Sequence[str] = DEFAULT_FORMATS, dpi: int = 300,
-                *, legend: bool = False) -> List[Path]:
+                *, legend: bool = False, legend_kwargs: Optional[Dict] = None,
+                legend_artist=None) -> List[Path]:
     """Write an already-built figure to every requested format and close it.
 
     With ``legend=True`` a shared style legend is placed in a reserved strip at
-    the bottom (see :func:`series_legend`).
+    the bottom (see :func:`series_legend`); *legend_kwargs* is forwarded to it,
+    so a figure that also drew a band or a fit can label them. Pass
+    *legend_artist* -- any ``callable(fig)`` -- to draw a different legend into
+    that same reserved strip (the candidate-model figure needs one naming four
+    line styles, which :func:`series_legend` does not describe).
     """
     with plt.rc_context(PAPER_STYLE):
-        fig.tight_layout(rect=(0, 0.04, 1, 1) if legend else None)
-        if legend:
-            series_legend(fig)
+        fig.tight_layout(rect=(0, 0.04, 1, 1) if (legend or legend_artist) else None)
+        if legend_artist is not None:
+            legend_artist(fig)
+        elif legend:
+            series_legend(fig, **(legend_kwargs or {}))
     return _save(fig, Path(stem), formats, dpi)
 
 
 # --- indexes --------------------------------------------------------------------
 
+MANIFEST_COLUMNS = ("combo", "layer", "channel", "kind", "metric", "method",
+                    "instance", "epochs", "panels", "file")
+
+
+def merge_manifest(path: Path, records: Sequence[dict]) -> List[dict]:
+    """Existing manifest rows + *records*, keyed by file path.
+
+    The manifest describes the DIRECTORY, not the last invocation: a narrow
+    re-run (say, one layer at one epoch) must not erase the index of everything
+    exported before it. Rows whose file has since been deleted are dropped, so
+    the manifest cannot drift into listing figures that are gone.
+    """
+    merged: Dict[str, dict] = {}
+    path = Path(path)
+    if path.exists():
+        with path.open(encoding="utf-8") as fh:
+            for row in csv.DictReader(fh):
+                if row.get("file") and Path(row["file"]).exists():
+                    merged[row["file"]] = row
+    for record in records:
+        merged[str(record["file"])] = record
+    return [merged[key] for key in sorted(merged)]
+
+
 def write_manifest_csv(path: Path, records: Sequence[dict]) -> Path:
-    """One row per generated figure, so the set is searchable without ``ls``."""
+    """One row per figure in the directory, so the set is searchable without ``ls``."""
     path = Path(path)
     ensure_dir(path.parent)
-    columns = ["combo", "layer", "channel", "kind", "metric", "method",
-               "instance", "epochs", "panels", "file"]
     with path.open("w", newline="", encoding="utf-8") as fh:
-        writer = csv.DictWriter(fh, fieldnames=columns, extrasaction="ignore")
+        writer = csv.DictWriter(fh, fieldnames=list(MANIFEST_COLUMNS), extrasaction="ignore")
         writer.writeheader()
         for record in records:
             writer.writerow(record)

@@ -17,6 +17,12 @@ Each file has one row per (combo, layer, kind, epoch), plus a row with
 ``epoch = all`` per (combo, layer, kind) pooling every captured epoch -- so a
 LaTeX table can be built from a single filter, without a second pass.
 
+Every ``(kind, epoch)`` additionally gets a ``layer = all`` row: all of that
+model's neurons pooled into ONE population. Those rows are the whole-model
+"mean suspiciousness / mean gradient at epoch e" series that
+``scripts/plot_trajectory_population.py`` plots -- it reads this CSV instead of
+re-reducing the tensors, so the figure and the table can never disagree.
+
 Run:
 
     python scripts/value_stats.py                 # both experiments
@@ -49,7 +55,7 @@ from susgrad.persistence import (
     seed_run_name,
 )
 from susgrad.sbfl import METRIC_NAMES
-from susgrad.stats import STAT_FIELDS, describe_stack, format_row
+from susgrad.stats import ALL_LAYERS, STAT_FIELDS, describe_stack, format_row
 from susgrad.utils import (
     ENSEMBLE_DIR,
     ENSEMBLE_GRADIENTS_DIR,
@@ -64,17 +70,29 @@ COLUMNS = ["experiment", "combo", "layer", "kind", "epoch", "instances"] + list(
 
 
 def _rows_for_epoch(experiment, combo_key, epoch, susp_dumps, grad_dumps, metrics, layers):
-    """One row per (layer, kind) at this epoch, pooled over the given dumps."""
+    """One row per (layer, kind) at this epoch, pooled over the given dumps.
+
+    Plus a ``layer = all`` row per kind: every layer's neurons pooled into one
+    population. That row is what a whole-model curve is drawn from -- see
+    ``scripts/plot_trajectory_population.py`` -- so it is written here rather
+    than re-derived there, and the figure can never disagree with the table.
+    Pooling is over NEURONS, so a big layer contributes proportionally more
+    (conv1's 4704 units outweigh net.1's 128); the per-layer rows are still
+    there for anyone who wants them separated.
+    """
     rows = []
-    for layer in layers:
+    for layer in list(layers) + [ALL_LAYERS]:
+        wanted = list(layers) if layer == ALL_LAYERS else [layer]
         for metric in metrics:
-            stats = describe_stack(d[metric][layer] for d in susp_dumps if layer in d.get(metric, {}))
+            stats = describe_stack(
+                d[metric][name] for d in susp_dumps for name in wanted if name in d.get(metric, {})
+            )
             rows.append({
                 "experiment": experiment, "combo": combo_key, "layer": layer,
                 "kind": metric, "epoch": epoch, "instances": len(susp_dumps),
                 **format_row(stats),
             })
-        stats = describe_stack(d[layer] for d in grad_dumps if layer in d)
+        stats = describe_stack(d[name] for d in grad_dumps for name in wanted if name in d)
         rows.append({
             "experiment": experiment, "combo": combo_key, "layer": layer,
             "kind": "gradient", "epoch": epoch, "instances": len(grad_dumps),
@@ -84,20 +102,27 @@ def _rows_for_epoch(experiment, combo_key, epoch, susp_dumps, grad_dumps, metric
 
 
 def _pooled_rows(experiment, combo_key, per_epoch_susp, per_epoch_grad, metrics, layers, n_instances):
-    """The ``epoch = all`` rows: every captured epoch pooled together."""
+    """The ``epoch = all`` rows: every captured epoch pooled together.
+
+    Carries the same ``layer = all`` row as :func:`_rows_for_epoch`, so the
+    ``(layer, epoch) = (all, all)`` cell -- the single number describing a whole
+    model over its whole run -- exists too.
+    """
     rows = []
-    for layer in layers:
+    for layer in list(layers) + [ALL_LAYERS]:
+        wanted = list(layers) if layer == ALL_LAYERS else [layer]
         for metric in metrics:
             stats = describe_stack(
-                d[metric][layer] for dumps in per_epoch_susp.values()
-                for d in dumps if layer in d.get(metric, {})
+                d[metric][name] for dumps in per_epoch_susp.values()
+                for d in dumps for name in wanted if name in d.get(metric, {})
             )
             rows.append({
                 "experiment": experiment, "combo": combo_key, "layer": layer,
                 "kind": metric, "epoch": "all", "instances": n_instances, **format_row(stats),
             })
         stats = describe_stack(
-            d[layer] for dumps in per_epoch_grad.values() for d in dumps if layer in d
+            d[name] for dumps in per_epoch_grad.values()
+            for d in dumps for name in wanted if name in d
         )
         rows.append({
             "experiment": experiment, "combo": combo_key, "layer": layer,
@@ -148,7 +173,8 @@ def _collect(log, experiment, combos, susp_base, grad_base, variants_for, epoch_
                              metrics, layers, len(variants))
 
         field(log, combo.key, f"{len(variants)} run(s) x {len(epochs)} epoch(s) x "
-                              f"{len(layers)} layer(s) x {len(metrics)} metric(s) + gradient")
+                              f"{len(layers)} layer(s) (+ '{ALL_LAYERS}') x "
+                              f"{len(metrics)} metric(s) + gradient")
     return rows
 
 
@@ -159,6 +185,10 @@ def _write(path: Path, rows) -> Path:
         writer.writeheader()
         writer.writerows(rows)
     return path
+
+
+#: The one summary table this script writes, per experiment directory.
+STATS_NAME = "value_stats.csv"
 
 
 @click.command()
@@ -184,18 +214,31 @@ def main(only, seed, epochs, ensemble_out, trajectory_out, **flags):
     field(log, "Experiments", only)
     field(log, "Epochs", "all captured" if epoch_limit is None else sorted(epoch_limit))
     field(log, "Statistics", ", ".join(STAT_FIELDS))
+    field(log, "Gradients", f"read from {Path('gradients')}/, written to {STATS_NAME}")
+
+    ens_grads = ENSEMBLE_GRADIENTS_DIR
+    traj_grads = TRAJECTORY_GRADIENTS_DIR
+    # A missing directory means the CAPTURE step was never run -- a different
+    # problem from "captured, but no epoch is common to every run", and the
+    # per-combo skip below cannot tell them apart.
+    for label, directory, step in (("ensemble", ens_grads, "train-ensemble"),
+                                   ("trajectory", traj_grads, "train-trajectory")):
+        if only in ("both", label) and not directory.exists():
+            log.warning("%s: %s does not exist -- nothing was captured yet. "
+                        "Run `make %s` first.", label, directory, step)
 
     written = []
     if only in ("both", "ensemble"):
         section(log, "Experiment 1 (across instances)")
         rows = _collect(
-            log, "ensemble", combos, ENSEMBLE_SUSPICIOUSNESS_DIR, ENSEMBLE_GRADIENTS_DIR,
+            log, "ensemble", combos, ENSEMBLE_SUSPICIOUSNESS_DIR, ens_grads,
             lambda c: sorted(set(list_instances(ENSEMBLE_SUSPICIOUSNESS_DIR, c.key))
-                             & set(list_instances(ENSEMBLE_GRADIENTS_DIR, c.key))),
+                             & set(list_instances(ens_grads, c.key))),
             epoch_limit,
         )
         if rows:
-            path = Path(ensemble_out) if ensemble_out else ENSEMBLE_DIR / "value_stats.csv"
+            path = (Path(ensemble_out) if ensemble_out
+                    else ENSEMBLE_DIR / STATS_NAME)
             written.append(_write(path, rows))
             field(log, "Rows", len(rows))
 
@@ -203,12 +246,13 @@ def main(only, seed, epochs, ensemble_out, trajectory_out, **flags):
         section(log, "Experiment 2 (across epochs, one seeded run)")
         variant = seed_run_name(seed)
         rows = _collect(
-            log, "trajectory", combos, TRAJECTORY_SUSPICIOUSNESS_DIR, TRAJECTORY_GRADIENTS_DIR,
+            log, "trajectory", combos, TRAJECTORY_SUSPICIOUSNESS_DIR, traj_grads,
             lambda c, v=variant: [v] if list_epochs(TRAJECTORY_SUSPICIOUSNESS_DIR, c.key, v) else [],
             epoch_limit,
         )
         if rows:
-            path = Path(trajectory_out) if trajectory_out else TRAJECTORY_DIR / "value_stats.csv"
+            path = (Path(trajectory_out) if trajectory_out
+                    else TRAJECTORY_DIR / STATS_NAME)
             written.append(_write(path, rows))
             field(log, "Rows", len(rows))
 

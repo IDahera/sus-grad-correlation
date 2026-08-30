@@ -164,3 +164,93 @@ def test_series_legend_labels_line_styles_not_metric_names(tmp_path):
     plt.close(fig)
 
     assert texts == ["suspiciousness (left axis)", "mean |gradient| (right axis)"]
+
+
+def test_manifest_merges_instead_of_replacing(tmp_path):
+    # A narrow re-run must not erase the index of the full export.
+    from susgrad.viz.figures import merge_manifest, write_manifest_csv
+
+    first, second = tmp_path / "a.png", tmp_path / "b.png"
+    first.write_bytes(b"x")
+    second.write_bytes(b"x")
+    row = lambda p, layer: {"combo": "m", "layer": layer, "channel": "", "kind": "corr",
+                            "metric": "ochiai", "method": "spearman", "instance": "",
+                            "epochs": "0", "panels": 1, "file": str(p)}
+
+    manifest = tmp_path / "manifest.csv"
+    write_manifest_csv(manifest, merge_manifest(manifest, [row(first, "l1")]))
+    write_manifest_csv(manifest, merge_manifest(manifest, [row(second, "l2")]))
+
+    text = manifest.read_text(encoding="utf-8")
+    assert "a.png" in text and "b.png" in text
+
+
+def test_manifest_drops_rows_whose_file_is_gone(tmp_path):
+    from susgrad.viz.figures import merge_manifest, write_manifest_csv
+
+    stale = tmp_path / "gone.png"
+    stale.write_bytes(b"x")
+    row = {"combo": "m", "layer": "l", "channel": "", "kind": "corr", "metric": "ochiai",
+           "method": "spearman", "instance": "", "epochs": "0", "panels": 1, "file": str(stale)}
+    manifest = tmp_path / "manifest.csv"
+    write_manifest_csv(manifest, merge_manifest(manifest, [row]))
+    stale.unlink()
+
+    assert merge_manifest(manifest, []) == []
+
+
+def test_context_series_gets_its_own_offset_axis():
+    # The loss shares a panel with two quantities it is orders of magnitude
+    # away from, so it must land on a third axis rather than borrow either
+    # scale -- and that axis has to sit clear of the right-hand one.
+    import matplotlib.pyplot as plt
+
+    from susgrad.viz.figures import CONTEXT_SPINE_OFFSET, draw_series_panel
+
+    fig, ax = plt.subplots()
+    draw_series_panel(
+        ax, [0, 1, 2], {"ochiai": [0.6, 0.2, 0.2]},
+        right_series={"mean |gradient|": [1e-5, 2e-5, 3e-5]},
+        context_series={"test loss": [2.3, 0.4, 0.5]},
+        left_label="ochiai", right_label="mean |gradient|",
+        context_label="cross-entropy loss",
+    )
+    twins = [a for a in fig.axes if a is not ax]
+    offsets = [a.spines["right"].get_position() for a in twins]
+    labels = [a.get_ylabel() for a in twins]
+    plt.close(fig)
+
+    assert len(twins) == 2                                    # gradient + loss
+    assert ("outward", CONTEXT_SPINE_OFFSET) in offsets       # the loss is pushed out
+    assert "cross-entropy loss" in labels
+
+
+def test_context_series_leaves_a_gap_for_a_missing_epoch():
+    # The training loss has no value at epoch 0 (nothing has been trained yet);
+    # nan draws a gap, where a 0 would invent a converged-looking point.
+    import matplotlib.pyplot as plt
+    import numpy as np
+
+    from susgrad.viz.figures import draw_series_panel
+
+    fig, ax = plt.subplots()
+    draw_series_panel(ax, [0, 1, 2], {"ochiai": [0.6, 0.2, 0.2]},
+                      context_series={"training loss": [float("nan"), 0.4, 0.2]})
+    drawn = [a for a in fig.axes if a is not ax][0].lines[0].get_ydata()
+    plt.close(fig)
+
+    assert np.isnan(drawn[0]) and list(drawn[1:]) == [0.4, 0.2]
+
+
+def test_series_legend_names_each_context_series():
+    import matplotlib.pyplot as plt
+
+    from susgrad.viz.figures import series_legend
+
+    fig, _ = plt.subplots()
+    series_legend(fig, context_labels=["test loss (far-right axis)",
+                                       "training loss (far-right axis)"])
+    texts = [t.get_text() for t in fig.legends[0].get_texts()]
+    plt.close(fig)
+
+    assert texts[-2:] == ["test loss (far-right axis)", "training loss (far-right axis)"]

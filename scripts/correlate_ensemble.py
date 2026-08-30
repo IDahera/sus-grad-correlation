@@ -20,6 +20,9 @@ and correlates along it -- it doesn't care whether the list is ordered by epoch
     outputs/ensemble/correlation/<combo>/epoch<EE>/population.json
         -> exactly which instances that file was correlated over, so a later run
            with a different population recomputes instead of silently mixing the two
+    outputs/ensemble/correlation_stats.csv
+        -> the same per-layer statistics as the report, flat: one row per
+           (combo, layer, metric, method, epoch) -- what a LaTeX table is built from
     outputs/ensemble/correlation/<combo>/correlation_report.md
         -> the same thing in text: per-epoch statistics (mean |r|, median,
            % strong, % zero) plus ASCII heatmaps, with epochs printed one after
@@ -30,6 +33,7 @@ Run AFTER train_ensemble.py:
     python scripts/correlate_ensemble.py --epochs 0,1,10
 """
 
+import csv
 import json
 import sys
 import time
@@ -240,6 +244,45 @@ def _heatmap_blocks(epochs, methods, metrics, layers, per_epoch, *, channels, ma
     return blocks
 
 
+def _stats_rows(combo, instances, epochs, methods, metrics, layers, per_epoch):
+    """The per-layer correlation statistics as flat rows (the markdown report's
+    detail table, in a form a table generator or a stats tool can read)."""
+    rows = []
+    for method in methods:
+        for metric in metrics:
+            for layer in layers:
+                for epoch in epochs:
+                    tensor = per_epoch[epoch].get(metric, {}).get(method, {}).get(layer)
+                    if tensor is None:
+                        continue
+                    s = correlation_summary(tensor.detach().cpu().numpy())
+                    rows.append({
+                        "combo": combo.key, "layer": layer, "metric": metric,
+                        "method": method, "epoch": epoch, "instances": len(instances),
+                        "n": s["n"], "mean_r": f"{s['mean']:.6f}",
+                        "mean_abs_r": f"{s['mean_abs']:.6f}", "median_r": f"{s['median']:.6f}",
+                        "std": f"{s['std']:.6f}", "frac_strong": f"{s['frac_strong']:.6f}",
+                        "frac_pos": f"{s['frac_pos']:.6f}", "frac_neg": f"{s['frac_neg']:.6f}",
+                        "frac_zero": f"{s['frac_zero']:.6f}",
+                        "min_r": f"{s['min']:.6f}", "max_r": f"{s['max']:.6f}",
+                    })
+    return rows
+
+
+STATS_COLUMNS = ["combo", "layer", "metric", "method", "epoch", "instances", "n",
+                 "mean_r", "mean_abs_r", "median_r", "std", "frac_strong",
+                 "frac_pos", "frac_neg", "frac_zero", "min_r", "max_r"]
+
+
+def _write_stats_csv(path: Path, rows) -> Path:
+    ensure_dir(path.parent)
+    with path.open("w", newline="", encoding="utf-8") as fh:
+        writer = csv.DictWriter(fh, fieldnames=STATS_COLUMNS, extrasaction="ignore")
+        writer.writeheader()
+        writer.writerows(rows)
+    return path
+
+
 def _write_report(path, *, combo, instances, epochs, methods, metrics, layers, per_epoch,
                   seeds_file, log, heatmaps, channels, max_rows, max_cols):
     head = [
@@ -314,6 +357,9 @@ def main(methods, epochs, report, report_heatmaps, report_channels, report_max_r
     grad_base = Path(grad_dir) if grad_dir else ENSEMBLE_GRADIENTS_DIR
     susp_base = Path(susp_dir) if susp_dir else ENSEMBLE_SUSPICIOUSNESS_DIR
     corr_base = Path(output_dir) if output_dir else ENSEMBLE_CORRELATION_DIR
+    # corr_base.parent is shared by both gradient kinds, so this summary table
+    # needs the kind in its NAME or the second run overwrites the first's.
+    stats_csv_name = "correlation_stats.csv"
 
     section(log, "Plan")
     field(log, "Suspiciousness metrics", ", ".join(METRIC_NAMES))
@@ -325,6 +371,7 @@ def main(methods, epochs, report, report_heatmaps, report_channels, report_max_r
     field(log, "Overwrite", overwrite)
     field(log, "Combinations", f"{len(combos)} selected")
 
+    stats_rows = []
     for combo in combos:
         section(log, combo.label)
 
@@ -409,6 +456,8 @@ def main(methods, epochs, report, report_heatmaps, report_channels, report_max_r
 
         methods_present = [m for m in methods
                            if all(m in per_epoch[e].get(metrics_present[0], {}) for e in common_epochs)]
+        stats_rows += _stats_rows(combo, instances, common_epochs, methods_present,
+                                  metrics_present, layers, per_epoch)
         report_path = ensure_dir(corr_base / combo.key) / "correlation_report.md"
         _write_report(
             report_path, combo=combo, instances=instances, epochs=common_epochs,
@@ -420,6 +469,9 @@ def main(methods, epochs, report, report_heatmaps, report_channels, report_max_r
         long_field(log, "Text report", report_path)
 
     section(log, "Done")
+    if stats_rows:
+        long_field(log, "Correlation statistics (CSV)",
+                   _write_stats_csv(corr_base.parent / stats_csv_name, stats_rows))
     long_field(log, "Run log", logfile)
 
 

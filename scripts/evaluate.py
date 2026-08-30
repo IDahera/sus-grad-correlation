@@ -101,7 +101,7 @@ def main(epoch, corr_method, channel, max_neurons,
 
             try:
                 susp_all = load_suspiciousness(combo.key, variant, snap, base_dir=susp_dir)
-                grad = load_gradients(combo.key, variant, snap, base_dir=grad_dir)
+                grad = load_gradients(combo.key, variant, snap, base_dir=grad_base)
             except FileNotFoundError as exc:
                 log.warning("  %s/%s: %s", combo.key, variant, exc)
                 continue

@@ -100,7 +100,8 @@ def main(methods, grad_dir, susp_dir, output_dir, overwrite, only, **flags):
                 continue
 
             susp_dumps = [load_suspiciousness(combo.key, variant, e, base_dir=susp_dir) for e in common]
-            grad_per_epoch = [load_gradients(combo.key, variant, e, base_dir=grad_dir) for e in common]
+            grad_per_epoch = [load_gradients(combo.key, variant, e, base_dir=grad_base)
+                              for e in common]
             metrics_present = [m for m in SUSP_METRICS if m in susp_dumps[0]]
 
             t0 = time.perf_counter()
@@ -112,7 +113,7 @@ def main(methods, grad_dir, susp_dir, output_dir, overwrite, only, **flags):
             }
             compute_s = time.perf_counter() - t0
 
-            path = save_correlation(result, combo.key, variant, base_dir=output_dir)
+            path = save_correlation(result, combo.key, variant, base_dir=corr_base)
             any_metric = next(iter(result))
             log.info("  - %s (epochs 1..%d): corr in %.3fs (%s) -> %s",
                      variant, common[-1], compute_s,

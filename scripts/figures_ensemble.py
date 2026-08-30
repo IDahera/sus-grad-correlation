@@ -71,6 +71,7 @@ from susgrad.utils import (
 from susgrad.viz import build_heatmap
 from susgrad.viz.figures import (
     figure_stem,
+    merge_manifest,
     range_label,
     save_heatmap,
     save_heatmap_row,
@@ -159,7 +160,8 @@ def _emit(stem_dir, *, base_kwargs, panels_by_epoch, epochs, title, subtitle_fn,
 @click.option("--out-dir", default=None, help="Where to write the figures.")
 @ensemble_combo_options
 def main(epochs, instance, instance_seed, metrics, methods, layers, flat, channels, formats,
-         singles, rows, samples, dpi, grad_dir, susp_dir, corr_dir, out_dir, **flags):
+         singles, rows, samples, dpi, grad_dir, susp_dir, corr_dir, out_dir,
+         **flags):
     log, logfile = setup_logging("figures_ensemble")
     wanted_epochs = parse_epoch_list(epochs, allow_auto=True)
     formats = [f.strip().lower() for f in formats.split(",") if f.strip()]
@@ -174,7 +176,8 @@ def main(epochs, instance, instance_seed, metrics, methods, layers, flat, channe
     grad_base = Path(grad_dir) if grad_dir else ENSEMBLE_GRADIENTS_DIR
     susp_base = Path(susp_dir) if susp_dir else ENSEMBLE_SUSPICIOUSNESS_DIR
     corr_base = Path(corr_dir) if corr_dir else ENSEMBLE_CORRELATION_DIR
-    out_base = ensure_dir(Path(out_dir) if out_dir else ENSEMBLE_FIGURES_DIR)
+    out_base = ensure_dir(Path(out_dir) if out_dir
+                          else ENSEMBLE_FIGURES_DIR)
     rng = random.Random(instance_seed)
 
     section(log, "Plan")
@@ -342,8 +345,13 @@ def main(epochs, instance, instance_seed, metrics, methods, layers, flat, channe
     section(log, "Done")
     field(log, "Figures", f"{len(records)} ({len(records) * len(formats)} files) "
                           f"in {time.perf_counter() - t_start:.1f}s")
-    long_field(log, "Manifest", write_manifest_csv(out_base / "manifest.csv", records))
-    long_field(log, "LaTeX index", write_latex_index(out_base / "figures.tex", records, root=out_base))
+    # Merge, never replace: a narrow re-run (one layer, one epoch) must not wipe
+    # the index of everything exported before it.
+    all_records = merge_manifest(out_base / "manifest.csv", records)
+    if len(all_records) > len(records):
+        field(log, "Manifest", f"{len(records)} written this run, {len(all_records)} in the directory")
+    long_field(log, "Manifest", write_manifest_csv(out_base / "manifest.csv", all_records))
+    long_field(log, "LaTeX index", write_latex_index(out_base / "figures.tex", all_records, root=out_base))
     long_field(log, "Run log", logfile)
 
 
